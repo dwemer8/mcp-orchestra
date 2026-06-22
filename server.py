@@ -22,6 +22,11 @@ DEFAULT_MAX_CONCURRENCY = 8
 DEFAULT_TIMEOUT_SECONDS = 120.0
 DEFAULT_MODELS_PATH = "/models"
 DEFAULT_CHAT_COMPLETIONS_PATH = "/chat/completions"
+# Generous default budgets: local reasoning models (e.g. Qwen3.x) spend a large,
+# unpredictable share of max_tokens on hidden reasoning, so a low cap truncates the
+# visible answer mid-section. Local models are unlimited, so we err on the high side.
+DEFAULT_MAX_TOKENS = 8192
+DEFAULT_COMPRESS_MAX_TOKENS = 4096
 MAX_ATTEMPTS = 3
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 
@@ -427,7 +432,7 @@ class LocalLLMService:
         prompt: str,
         system: str = "",
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> ChatCompletion:
         messages: list[dict[str, str]] = []
         if system:
@@ -587,7 +592,7 @@ async def local_generate(
     prompt: str,
     system: str = "",
     temperature: float = 0.7,
-    max_tokens: int = 2048,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> dict[str, Any]:
     """Generate one chat completion using a discovered local model."""
     start = time.perf_counter()
@@ -683,7 +688,7 @@ async def run_batch_job(index: int, job: dict[str, Any]) -> dict[str, Any]:
         prompt = require_string(job, "prompt")
         system = optional_string(job, "system", "")
         temperature = optional_float(job, "temperature", 0.7)
-        max_tokens = optional_positive_int(job, "max_tokens", 2048)
+        max_tokens = optional_positive_int(job, "max_tokens", DEFAULT_MAX_TOKENS)
 
         service = get_service()
         validation_error = await service.validate_model(model)
@@ -749,7 +754,7 @@ async def local_compress(
     text: str,
     model: str,
     instruction: str = "Summarize and structure the key facts, preserving all decision-relevant detail.",
-    max_tokens: int = 1024,
+    max_tokens: int = DEFAULT_COMPRESS_MAX_TOKENS,
 ) -> str:
     """Compress large text through a local model before sending it to the orchestrator."""
     start = time.perf_counter()

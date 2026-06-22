@@ -81,9 +81,9 @@ Check status inside Claude Code with:
 ## Tools
 
 - `list_local_models()` returns discovered model IDs and metadata.
-- `local_generate(model, prompt, system="", temperature=0.7, max_tokens=2048)` runs one completion.
+- `local_generate(model, prompt, system="", temperature=0.7, max_tokens=8192)` runs one completion.
 - `local_batch(jobs)` runs many completions concurrently with `LOCAL_MAX_CONCURRENCY` and returns input-ordered per-job results.
-- `local_compress(text, model, instruction=..., max_tokens=1024)` summarizes large material through a local model before Claude reads it.
+- `local_compress(text, model, instruction=..., max_tokens=4096)` summarizes large material through a local model before Claude reads it.
 
 ## Runtime Behavior
 
@@ -94,3 +94,5 @@ Check status inside Claude Code with:
 - Every HTTP request has a timeout from `LOCAL_TIMEOUT_SECONDS`.
 - `429` and `5xx` responses, timeouts, and network errors are retried up to 3 attempts with exponential backoff.
 - Structured JSON logs are written to stderr, never stdout.
+- Default `max_tokens` is high (8192 for generate/batch, 4096 for compress) on purpose: local reasoning models spend an unpredictable, often large share of the budget on hidden reasoning (observed 3800+ tokens), so a low cap truncates the visible answer. Local models are unlimited, so generous defaults are cheap.
+- An empty completion (model exhausted `max_tokens` on reasoning, `finish_reason="length"`) is reported as `ok:false` with diagnostic fields, never as a silent empty success.
