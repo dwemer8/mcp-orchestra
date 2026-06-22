@@ -1,0 +1,10 @@
+# secrets & local config
+.env
+
+# python venv & caches
+.venv/
+__pycache__/
+*.pyc
+
+# logs
+*.log
