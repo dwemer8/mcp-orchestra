@@ -10,6 +10,37 @@ session start) so the routing discipline below is always in effect.
 
 ---
 
+## 0. ROUTING GATE — run this BEFORE any substantial work (mandatory)
+
+This is a hard gate, not advice. **Before** you write code, generate/classify/filter/
+summarize anything at volume, or read a large pile of material, STOP and state the
+route in one line, then act on it:
+
+> **Route:** mine = `<decomposition/judgment/synthesis/review>` · Codex = `<final code from spec>` · local = `<bulk/draft/compress, which model+tool>`
+
+If you didn't write that line, you skipped the gate. No silent "I'll just do it myself."
+
+**Hard triggers — if the task matches, the work is NOT yours by default:**
+
+- About to write **final/production code from a settled spec** → **Codex** (codex
+  plugin). Yours: the spec + decomposition + reviewing Codex's output. Do **not** write
+  it yourself "because it's faster" — that's the #1 leak.
+- About to produce **many similar items** (candidates, classifications, filters, drafts,
+  per-file edits) → **`local_batch`** on Qwen3.6-35B. You review the distilled shortlist,
+  not the raw pile.
+- About to **read a large blob** (logs, transcripts, search dumps, multi-file context) →
+  **`local_compress`** it first, then read the concentrate.
+- About to write a **throwaway/exploratory draft** of code → local model
+  (unsloth-coder or Qwen-397B), not your own tokens, not Codex.
+
+**Always yours, never delegated:** decomposition, judgment calls, hypothesis design,
+final synthesis, and correctness review of anything a model produced.
+
+Self-policing phrase: *"If I'm about to generate at volume or write final code, I'm
+doing someone else's job — route it first."* Details for each route are in §1–§3 below.
+
+---
+
 ## 1. The agents available
 
 Local models are called through the MCP server tools: `local_generate`,
