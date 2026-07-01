@@ -96,3 +96,31 @@ Check status inside Claude Code with:
 - Structured JSON logs are written to stderr, never stdout.
 - Default `max_tokens` is high (8192 for generate/batch, 4096 for compress) on purpose: local reasoning models spend an unpredictable, often large share of the budget on hidden reasoning (observed 3800+ tokens), so a low cap truncates the visible answer. Local models are unlimited, so generous defaults are cheap.
 - An empty completion (model exhausted `max_tokens` on reasoning, `finish_reason="length"`) is reported as `ok:false` with diagnostic fields, never as a silent empty success.
+
+## Codex Sandbox Gotcha (write tasks fail with `bwrap`)
+
+Codex is the orchestration's "final code" engine, reached through the `codex@openai-codex`
+plugin. In a hardened container you will hit this:
+
+- **Symptom:** Codex **read-only** tasks (reviews, analysis) work, but **write/exec** tasks
+  fail with `bwrap: No permissions to create a new namespace`.
+- **Cause:** Codex wraps every executed command/patch in bundled **bubblewrap**, which must
+  create a user namespace. The container blocks namespace creation at the seccomp/capabilities
+  level (`unshare --user` → `Operation not permitted`) — even when the
+  `kernel.unprivileged_userns_clone` sysctl is set. It's a container-runtime lock, not
+  something you can toggle from inside.
+- **No middle ground:** `workspace-write` also uses bwrap and fails identically; only
+  `danger-full-access` skips the sandbox entirely.
+- **Fix (security tradeoff — the container becomes the only isolation boundary):** set
+  `sandbox_mode = "danger-full-access"` in `~/.codex/config.toml` **and** change the plugin
+  companion's per-turn sandbox (which overrides config) — in
+  `~/.claude/plugins/cache/openai-codex/codex/<version>/scripts/codex-companion.mjs`, the write
+  branch `request.write ? "workspace-write"` → `"danger-full-access"`. Codex commands then run
+  unsandboxed in-container (no approval gate; `agents/.env` is reachable) — only do this in a
+  container you trust as the boundary.
+- **Fragile:** the companion edit lives in the plugin cache and is **reverted by a codex plugin
+  update** — re-apply it in the new version dir if the bwrap error returns. Durable alternative:
+  relaunch the container host-side with namespaces allowed (`--cap-add SYS_ADMIN` /
+  `--security-opt seccomp=unconfined` / `--privileged`), which keeps Codex's real sandbox.
+
+Full step-by-step (plugin install + login + this fix) is in `DEPLOYMENT.md` step 3.

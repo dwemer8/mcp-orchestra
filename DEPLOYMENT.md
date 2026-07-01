@@ -10,11 +10,14 @@ In a fresh container, paste this to Claude Code:
 
 > Bring up the local-agents orchestra per `agents/DEPLOYMENT.md`. The local-API key is `<PASTE_KEY>`.
 
-Claude will run the steps below. Two things only a human can supply:
+Claude will run the steps below. Things only a human can supply:
 1. **The `LOCAL_API_KEY`** — it's a secret, never in git. Paste it (or export it before launching).
 2. **`codex login`** — interactive ChatGPT auth; run it yourself in a terminal.
+3. **Approve the Codex sandbox tradeoff** (step 3c) — disabling Codex's sandbox is a
+   security decision; Claude will pause and ask before doing it.
 
-Everything else is automated and idempotent (safe to re-run).
+Everything else (deps, MCP registration, plugin install, the sandbox patch) is automated
+and idempotent (safe to re-run).
 
 ## What's in this folder (the entire pipeline)
 
@@ -26,6 +29,7 @@ agents/
 ├── .env                         # YOUR config with the key — created by setup.sh (gitignored)
 ├── setup.sh                     # one-shot bootstrap: venv + deps + .env + verify + register
 ├── ORCHESTRATION_PLAYBOOK.md    # routing + cost + fallback rules; loaded as Claude Code context
+├── codex-plugin-cc/             # vendored Codex plugin (valid marketplace root; offline install)
 └── DEPLOYMENT.md                # this file
 ```
 
@@ -74,17 +78,76 @@ Claude Code reads `CLAUDE.md` from the cwd and every parent up to `/`, so one fi
 working root covers all subfolders (e.g. `/workspace/causal_discovery`). Use a path relative
 to that `CLAUDE.md` (`@agents/...` when it sits beside the `agents/` folder).
 
-### 3. Install + log in to Codex (for code tasks)
+### 3. Install Codex + apply the sandbox fix (for code tasks)
 
-The Codex plugin lets Claude hand off final code generation. Marketplace + plugin install
-are config (travel via `~/.claude/settings.json`); the login is interactive:
+Codex is the orchestration's "final code" engine (playbook §1). Three parts: install the
+plugin, log in, and — in a locked-down container — disable Codex's own sandbox.
+
+#### 3a. Install the plugin
+
+```bash
+claude plugin marketplace add openai/codex-plugin-cc   # or: add ./agents/codex-plugin-cc (offline, pins vendored version)
+claude plugin install codex@openai-codex
+```
+
+This is the same thing the committed `~/.claude/settings.json` config does
+(`extraKnownMarketplaces.openai-codex` + `enabledPlugins."codex@openai-codex"`), so if you
+carry over an existing settings.json the plugin travels with it. **Offline / version-pinned
+alternative:** this repo vendors the plugin at `agents/codex-plugin-cc` (a valid marketplace
+root); `claude plugin marketplace add ./agents/codex-plugin-cc` installs that exact snapshot,
+which keeps the companion patch in 3c stable. Restart Claude Code so the plugin loads; verify
+with `/codex:setup` or `claude plugin list`.
+
+#### 3b. Log in (human only, interactive)
 
 ```bash
 codex login          # one-time ChatGPT auth, run in a terminal
 ```
 
-If the plugin isn't installed yet: add the marketplace `openai/codex-plugin-cc` and install
-`codex@openai-codex`, then `codex login`.
+#### 3c. Sandbox fix — REQUIRED in containers that block user namespaces
+
+Codex sandboxes every command/patch it executes with bundled **bubblewrap**, which must
+create a user namespace. Many hardened containers block that (seccomp/capabilities), so Codex
+**read-only tasks work but write/exec tasks fail** with:
+
+```
+bwrap: No permissions to create a new namespace
+```
+
+Detect whether this container is affected:
+
+```bash
+unshare --user --map-root-user echo ok    # prints "ok" = unaffected; "Operation not permitted" = affected
+```
+
+If affected, the fix is to run Codex **unsandboxed** — the container itself is the isolation
+boundary. **Security tradeoff (Claude must ask the human first):** Codex commands then run
+directly in-container with no second sandbox and no approval gate; that reach includes
+`agents/.env` (the local-API key). Only accept this in a container you trust as the boundary.
+There is **no middle ground** — `workspace-write` also uses bwrap and fails the same way; only
+`danger-full-access` skips bwrap. Two edits, both setting `danger-full-access`:
+
+1. `~/.codex/config.toml`, at top level:
+   ```toml
+   sandbox_mode = "danger-full-access"
+   ```
+2. The plugin **companion hardcodes a per-turn sandbox that overrides config**, so this is the
+   edit that actually matters. In
+   `~/.claude/plugins/cache/openai-codex/codex/<version>/scripts/codex-companion.mjs`, find the
+   write branch (search `request.write ? "workspace-write"`) and change it to
+   `request.write ? "danger-full-access" : "read-only"`.
+
+⚠️ **Edit #2 lives in the plugin cache — a codex plugin update/reinstall reverts it.** If write
+tasks start failing again with the bwrap error after an update, re-apply edit #2 in the new
+version's `codex-companion.mjs`. The durable alternative is host-side: relaunch the container
+with namespaces allowed (`--cap-add SYS_ADMIN` / `--security-opt seccomp=unconfined` /
+`--privileged`), which keeps Codex's real sandbox and needs neither edit.
+
+Verify write mode after the fix:
+
+> Ask Claude: *Run a Codex write task that creates a throwaway file, then delete it.*
+
+A successful `File changes completed.` (not the bwrap error) means Codex write mode is live.
 
 ### 4. Smoke test the whole loop
 
@@ -109,4 +172,7 @@ If Claude calls the tool, gets parallel results, and reports a shortlist — the
   `LOCAL_CHAT_COMPLETIONS_PATH=/chat/completions`.
 - **If a model (esp. DeepSeek-V4-Pro) is down**, that's expected — the playbook's §4 fallback
   governs behavior. Not a deployment failure.
+- **Codex write tasks failing with `bwrap: No permissions to create a new namespace`** = the
+  sandbox gotcha in step 3c, not a broken install. Read-only Codex still works; apply 3c (or
+  fix the container host-side) to enable write mode. Re-check after every codex plugin update.
 - **Upgrading later**: `git pull` + re-run `setup.sh` (re-installs deps, re-verifies, re-registers).
