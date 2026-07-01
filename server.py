@@ -17,7 +17,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 
-DEFAULT_BASE_URL = "https://your-gateway-host/api"
+DEFAULT_BASE_URL = ""  # no baked-in default; the endpoint is private — set LOCAL_BASE_URL in .env
 DEFAULT_MAX_CONCURRENCY = 8
 DEFAULT_TIMEOUT_SECONDS = 120.0
 DEFAULT_MODELS_PATH = "/models"

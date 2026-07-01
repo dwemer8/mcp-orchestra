@@ -4,7 +4,7 @@ MCP stdio server exposing local OpenAI-compatible chat models to Claude Code.
 
 The server discovers model IDs from `GET $LOCAL_BASE_URL$LOCAL_MODELS_PATH` at startup. It does not hardcode model names. If model discovery fails, the server exits with an actionable error instead of falling back silently.
 
-For `your-gateway-host`, the existing EconCausal harness shows this is an Open WebUI gateway: use `LOCAL_BASE_URL=https://your-gateway-host/api`, `LOCAL_MODELS_PATH=/models`, and `LOCAL_CHAT_COMPLETIONS_PATH=/chat/completions`.
+For an Open WebUI gateway, set `LOCAL_BASE_URL=https://<your-gateway-host>/api`, `LOCAL_MODELS_PATH=/models`, and `LOCAL_CHAT_COMPLETIONS_PATH=/chat/completions`. The endpoint URL is private — keep it in `.env` (gitignored), never in committed files.
 
 ## Install
 
@@ -13,7 +13,7 @@ deps, writes `.env`, verifies connectivity, and registers the server with Claude
 
 ```bash
 cd agents
-LOCAL_API_KEY='<your key>' bash setup.sh
+LOCAL_API_KEY='<your key>' LOCAL_BASE_URL='https://<your-gateway-host>/api' bash setup.sh
 ```
 
 See `DEPLOYMENT.md` for the full bootstrap (including the playbook and Codex). Manual
@@ -87,7 +87,7 @@ Check status inside Claude Code with:
 
 ## Runtime Behavior
 
-- `LOCAL_BASE_URL` defaults to `https://your-gateway-host/api`.
+- `LOCAL_BASE_URL` has no baked-in default — set it in `.env` (the endpoint is private and never committed).
 - `LOCAL_API_KEY` is sent only when non-empty.
 - `LOCAL_MODELS_PATH` defaults to `/models`; `LOCAL_CHAT_COMPLETIONS_PATH` defaults to `/chat/completions`.
 - For a raw `/v1` OpenAI-compatible server, set `LOCAL_BASE_URL=https://host`, `LOCAL_MODELS_PATH=/v1/models`, and `LOCAL_CHAT_COMPLETIONS_PATH=/v1/chat/completions`.

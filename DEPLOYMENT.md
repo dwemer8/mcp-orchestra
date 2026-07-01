@@ -8,10 +8,11 @@ tasks) log in to Codex. Total time: a few minutes.
 
 In a fresh container, paste this to Claude Code:
 
-> Bring up the local-agents orchestra per `agents/DEPLOYMENT.md`. The local-API key is `<PASTE_KEY>`.
+> Bring up the local-agents orchestra per `agents/DEPLOYMENT.md`. The local-API key is `<PASTE_KEY>` and the gateway URL is `<PASTE_URL>`.
 
 Claude will run the steps below. Things only a human can supply:
-1. **The `LOCAL_API_KEY`** — it's a secret, never in git. Paste it (or export it before launching).
+1. **The `LOCAL_API_KEY` and `LOCAL_BASE_URL`** — the key and the private gateway URL. Neither
+   is in git (both live only in the gitignored `.env`). Paste them, or export both before launching.
 2. **`codex login`** — interactive ChatGPT auth; run it yourself in a terminal.
 3. **Approve the Codex sandbox tradeoff** (step 3c) — disabling Codex's sandbox is a
    security decision; Claude will pause and ask before doing it.
@@ -43,13 +44,14 @@ Keep it in version control; porting is just `git clone`. **Never commit `.env`**
 
 ```bash
 cd agents
-LOCAL_API_KEY='<the key>' bash setup.sh
+LOCAL_API_KEY='<the key>' LOCAL_BASE_URL='https://<your-gateway-host>/api' bash setup.sh
 ```
 
 `setup.sh` is path-independent and idempotent. It:
 1. ensures `python3` + venv,
 2. creates `.venv` and installs pinned deps,
-3. creates `.env` from `.env.example` and injects `LOCAL_API_KEY`,
+3. creates `.env` from `.env.example` and injects `LOCAL_API_KEY` + `LOCAL_BASE_URL` from the
+   environment (the URL is private — the committed `.env.example` only carries a placeholder),
 4. **verifies connectivity** (`python server.py --list-models` — must print the models, no 401),
 5. **registers the MCP server** with Claude Code at **user scope**, path-only:
    `claude mcp add --scope user --transport stdio local-llm -- <abs>/.venv/bin/python <abs>/server.py`
@@ -161,7 +163,8 @@ If Claude calls the tool, gets parallel results, and reports a shortlist — the
 
 ## Portability notes & gotchas
 
-- **The key is the only machine-specific secret.** New container = clone + `LOCAL_API_KEY=... bash setup.sh`.
+- **The key and the gateway URL are the machine-specific private values.** Neither is committed
+  (both live only in the gitignored `.env`). New container = clone + `LOCAL_API_KEY=... LOCAL_BASE_URL=... bash setup.sh`.
 - **No absolute paths to edit by hand.** `setup.sh` computes them from its own location and
   registers accordingly. Re-running after a move fixes the registration.
 - **`.env` is gitignored.** Re-create it per container via `setup.sh` (it copies `.env.example`).

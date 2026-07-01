@@ -46,6 +46,14 @@ if [ -n "${LOCAL_API_KEY:-}" ]; then
     echo "    Wrote LOCAL_API_KEY from environment into .env"
   fi
 fi
+# The endpoint URL is private (never committed). Inject it from the environment if
+# provided; otherwise .env still holds the placeholder from .env.example and must be
+# edited by hand before verification will pass.
+if [ -n "${LOCAL_BASE_URL:-}" ]; then
+  tmp="$(mktemp)"
+  sed "s|^LOCAL_BASE_URL=.*|LOCAL_BASE_URL=${LOCAL_BASE_URL}|" .env > "$tmp" && mv "$tmp" .env
+  echo "    Wrote LOCAL_BASE_URL from environment into .env"
+fi
 
 echo "==> [5/6] Verifying connectivity (server.py reads .env itself)"
 if grep -qE '^LOCAL_API_KEY=.+' .env; then
