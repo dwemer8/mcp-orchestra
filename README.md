@@ -97,6 +97,27 @@ Check status inside Claude Code with:
 - Default `max_tokens` is high (8192 for generate/batch, 4096 for compress) on purpose: local reasoning models spend an unpredictable, often large share of the budget on hidden reasoning (observed 3800+ tokens), so a low cap truncates the visible answer. Local models are unlimited, so generous defaults are cheap.
 - An empty completion (model exhausted `max_tokens` on reasoning, `finish_reason="length"`) is reported as `ok:false` with diagnostic fields, never as a silent empty success.
 
+## Codex on/off (optional)
+
+Codex is **optional**. Out of the box this repo runs Codex-disabled: final code from a
+settled spec is routed to **Qwen3.5-397B-A17B-FP8** via `local_generate`, and Claude
+reviews the result. Everything works with the local models alone — no Codex install,
+login, or subscription needed.
+
+The routing playbook has two variants under `playbooks/` and `ORCHESTRATION_PLAYBOOK.md`
+is a symlink to the active one. Flip between them with:
+
+```bash
+./codex-toggle.sh off      # default: final code -> Qwen3.5-397B, Claude reviews
+./codex-toggle.sh on       # final code -> Codex (installs/enable steps printed if missing)
+./codex-toggle.sh status   # show the active playbook + plugin state
+```
+
+`on` also enables the `codex@openai-codex` plugin (and prints install instructions if it
+isn't there); `off` disables it. Changes take effect in **new** Claude Code sessions,
+since the playbook is read as context at startup. See `DEPLOYMENT.md` step 3 for the full
+Codex install + login flow.
+
 ## Codex Sandbox Gotcha (write tasks fail with `bwrap`)
 
 Codex is the orchestration's "final code" engine, reached through the `codex@openai-codex`
