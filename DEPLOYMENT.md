@@ -80,6 +80,32 @@ Claude Code reads `CLAUDE.md` from the cwd and every parent up to `/`, so one fi
 working root covers all subfolders (e.g. `/workspace/causal_discovery`). Use a path relative
 to that `CLAUDE.md` (`@agents/...` when it sits beside the `agents/` folder).
 
+### 2b. (Recommended) Register the routing-reminder hook
+
+The playbook loaded via `CLAUDE.md` is base context, but Claude can still drift and
+do delegable work itself. `hooks/route-reminder.py` is a `UserPromptSubmit` hook that
+inspects each prompt and, when it looks like final code / bulk fan-out / large-material
+reading, injects a short targeted reminder to run the ROUTING GATE and delegate to the
+right local model + tool. Trivial prompts get nothing.
+
+The script is in the repo (portable via git); the **registration is machine-local** —
+add it to your Claude Code `settings.json` (`~/.claude/settings.json`, or the running
+user's home) under `hooks`:
+
+```json
+"hooks": {
+  "UserPromptSubmit": [
+    { "hooks": [ { "type": "command",
+      "command": "<repo>/.venv/bin/python <repo>/hooks/route-reminder.py" } ] }
+  ]
+}
+```
+
+Use absolute paths (the `.venv/bin/python` created by `setup.sh` is guaranteed present).
+Takes effect in **new** Claude Code sessions. Test standalone:
+`echo '{"prompt":"напиши функцию"}' | <repo>/.venv/bin/python <repo>/hooks/route-reminder.py`
+should print a JSON `additionalContext`; a trivial prompt prints nothing.
+
 ### 3. Install Codex + apply the sandbox fix (for code tasks)
 
 Codex is the orchestration's "final code" engine (playbook §1). Three parts: install the
