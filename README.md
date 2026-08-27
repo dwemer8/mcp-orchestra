@@ -36,7 +36,8 @@ export LOCAL_MODELS_PATH=/models
 export LOCAL_CHAT_COMPLETIONS_PATH=/chat/completions
 export LOCAL_API_KEY=
 export LOCAL_MAX_CONCURRENCY=8
-export LOCAL_TIMEOUT_SECONDS=120
+export LOCAL_TIMEOUT_SECONDS=1800
+export LOCAL_REASONING_FIELDS=effort+thinking
 ```
 
 `LOCAL_API_KEY` is optional. When non-empty, requests include:
@@ -81,9 +82,43 @@ Check status inside Claude Code with:
 ## Tools
 
 - `list_local_models()` returns discovered model IDs and metadata.
-- `local_generate(model, prompt, system="", temperature=0.7, max_tokens=8192)` runs one completion.
-- `local_batch(jobs)` runs many completions concurrently with `LOCAL_MAX_CONCURRENCY` and returns input-ordered per-job results.
-- `local_compress(text, model, instruction=..., max_tokens=4096)` summarizes large material through a local model before Claude reads it.
+- `local_generate(model, prompt, system="", temperature=0.7, max_tokens=None, reasoning="")` runs one completion.
+- `local_batch(jobs)` runs many completions concurrently with `LOCAL_MAX_CONCURRENCY` and returns input-ordered per-job results. Each job: `{model, prompt, system?, temperature?, max_tokens?, reasoning?}`.
+- `local_compress(text, model, instruction=..., max_tokens=4096)` summarizes large material through a local model before Claude reads it. Reasoning is forced `off` — compression is mechanical and a chain of thought would eat the budget meant for the concentrate.
+
+### Reasoning
+
+`reasoning` accepts `off`, `low`, `medium`, `high`, `max`. Leave it empty to take the
+model's default depth:
+
+| Model | Default |
+|---|---|
+| `deepseek-ai/DeepSeek-V4-Pro` | `high` |
+| everything else | `off` |
+
+This is why the code route needs no extra argument. Mechanics, measured against the
+live gateway:
+
+- Two request fields are involved, and they are **not** symmetric.
+  `chat_template_kwargs.thinking` is the actual switch; `reasoning_effort` only grades
+  depth while thinking is on — sent alone it is silently ignored. `LOCAL_REASONING_FIELDS`
+  (`effort+thinking` | `thinking` | `off`) exists as an escape hatch if an endpoint
+  rejects one of them.
+- Reasoning is billed inside `completion_tokens`, so the answer and the chain of thought
+  share one budget. Leave `max_tokens` unset and the server picks one that fits the depth:
+  32768 when reasoning is on, 8192 otherwise.
+- The chain of thought is **not** returned — reading it would burn the orchestrator budget
+  this server exists to protect. `reasoning_chars` reports its size instead.
+- `reasoning` in a result is *what was requested*. Some models (Qwen3.6-35B among them)
+  reason on their own regardless, so `reasoning: "off"` alongside a non-zero
+  `reasoning_chars` is expected, not a contradiction.
+- `usage.reasoning_tokens` is unreliable and model-dependent: DeepSeek-V4-Pro reports `0`
+  even after a 1000+ character chain of thought, while Qwen3.6-35B fills it in. Trust
+  `reasoning_chars`, which is measured from the response itself.
+- If the endpoint rejects the reasoning fields (HTTP 400/422), the call is retried once
+  without them and the result carries `reasoning_downgraded: true` rather than failing.
+- If a model returns its answer in `reasoning_content` and leaves `content` empty, that
+  text is used as the answer and flagged with `content_from_reasoning: true`.
 
 ## Runtime Behavior
 
@@ -91,7 +126,7 @@ Check status inside Claude Code with:
 - `LOCAL_API_KEY` is sent only when non-empty.
 - `LOCAL_MODELS_PATH` defaults to `/models`; `LOCAL_CHAT_COMPLETIONS_PATH` defaults to `/chat/completions`.
 - For a raw `/v1` OpenAI-compatible server, set `LOCAL_BASE_URL=https://host`, `LOCAL_MODELS_PATH=/v1/models`, and `LOCAL_CHAT_COMPLETIONS_PATH=/v1/chat/completions`.
-- Every HTTP request has a timeout from `LOCAL_TIMEOUT_SECONDS`.
+- Every HTTP request has a timeout from `LOCAL_TIMEOUT_SECONDS` (default 1800s). Deep reasoning on a code task runs for minutes; the previous 120s cut it off mid-thought, which looked like an unreachable model and tripped the playbook's fallback rules for no reason.
 - `429` and `5xx` responses, timeouts, and network errors are retried up to 3 attempts with exponential backoff.
 - Structured JSON logs are written to stderr, never stdout.
 - Default `max_tokens` is high (8192 for generate/batch, 4096 for compress) on purpose: local reasoning models spend an unpredictable, often large share of the budget on hidden reasoning (observed 3800+ tokens), so a low cap truncates the visible answer. Local models are unlimited, so generous defaults are cheap.
@@ -100,15 +135,15 @@ Check status inside Claude Code with:
 ## Codex on/off (optional)
 
 Codex is **optional**. Out of the box this repo runs Codex-disabled: final code from a
-settled spec is routed to **Qwen3.5-397B-A17B-FP8** via `local_generate`, and Claude
-reviews the result. Everything works with the local models alone — no Codex install,
+settled spec is routed to **DeepSeek-V4-Pro** (reasoning `high`) via `local_generate`, and
+Claude reviews the result. Everything works with the local models alone — no Codex install,
 login, or subscription needed.
 
 The routing playbook has two variants under `playbooks/` and `ORCHESTRATION_PLAYBOOK.md`
 is a symlink to the active one. Flip between them with:
 
 ```bash
-./codex-toggle.sh off      # default: final code -> Qwen3.5-397B, Claude reviews
+./codex-toggle.sh off      # default: final code -> DeepSeek-V4-Pro (reasoning high), Claude reviews
 ./codex-toggle.sh on       # final code -> Codex (installs/enable steps printed if missing)
 ./codex-toggle.sh status   # show the active playbook + plugin state
 ```

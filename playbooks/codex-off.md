@@ -22,8 +22,9 @@ If you didn't write that line, you skipped the gate. No silent "I'll just do it 
 
 **Hard triggers — if the task matches, the work is NOT yours by default:**
 
-- About to write **final/production code from a settled spec** → **Qwen3.5-397B-A17B-FP8**
-  via `local_generate`. Yours: the spec + decomposition + reviewing the produced code.
+- About to write **final/production code from a settled spec** → **DeepSeek-V4-Pro**
+  via `local_generate`. It reasons at `high` by default — you do not need to pass anything.
+  Yours: the spec + decomposition + reviewing the produced code.
   Do **not** write it yourself "because it's faster" — that's the #1 leak.
 - About to produce **many similar items** (candidates, classifications, filters, drafts,
   per-file edits) → **`local_batch`** on Qwen3.6-35B. You review the distilled shortlist,
@@ -31,7 +32,7 @@ If you didn't write that line, you skipped the gate. No silent "I'll just do it 
 - About to **read a large blob** (logs, transcripts, search dumps, multi-file context) →
   **`local_compress`** it first, then read the concentrate.
 - About to write a **throwaway/exploratory draft** of code → local model
-  (unsloth-coder or Qwen3.6-35B), not your own tokens, not Qwen-397B.
+  (unsloth-coder or Qwen3.6-35B), not your own tokens, not DeepSeek-V4-Pro.
 
 **Always yours, never delegated:** decomposition, judgment calls, hypothesis design,
 final synthesis, and correctness review of anything a model produced.
@@ -51,9 +52,9 @@ Local models are called through the MCP server tools: `local_generate`,
 | Work type | Agent / model | Tool |
 |---|---|---|
 | Decomposition, specs, final analysis, decisions, code review | **You (Claude)** | — native |
-| Final/production code from a clear spec | Qwen3.5-397B-A17B-FP8 | `local_generate` |
-| Heavy generation, long reasoning, best-quality drafts | Qwen3.5-397B-A17B-FP8 | `local_generate` |
-| Second opinion / alternative approach (incl. on code) | DeepSeek-V4-Pro, then gpt-oss-120b | `local_generate` / `local_batch` |
+| Final/production code from a clear spec | **DeepSeek-V4-Pro** (reasoning `high` by default) | `local_generate` |
+| Heavy generation, long reasoning, best-quality drafts | **DeepSeek-V4-Pro** (reasoning `high` by default) | `local_generate` |
+| Second opinion / alternative approach (incl. on code) | Qwen3.5-397B-A17B-FP8, then gpt-oss-120b | `local_generate` / `local_batch` |
 | Mass candidate fan-out, classification, filtering | Qwen3.6-35B-A3B | `local_batch` |
 | Context compression before you read | Qwen3.6-35B-A3B | `local_compress` |
 | Cheap/bulk code drafts (not final) | unsloth-qwen2.5-coder:7b | `local_generate` |
@@ -80,10 +81,11 @@ Three rules, in priority order:
    context → send through `local_compress` first, then read the condensed version.
    One read of a concentrate beats ten reads of raw input.
 
-3. **Final code: your spec → Qwen3.5-397B → your mandatory review.** Draft/explore
-   code on the cheap models first (unsloth-coder or Qwen3.6-35B), hand Qwen-397B a
+3. **Final code: your spec → DeepSeek-V4-Pro → your mandatory review.** Draft/explore
+   code on the cheap models first (unsloth-coder or Qwen3.6-35B), hand DeepSeek a
    *clear spec* for the clean version, then review its output for correctness before
-   accepting. Don't burn Qwen-397B compute on exploration.
+   accepting. Don't burn high-reasoning compute on exploration — pass `reasoning="off"`
+   for cheap mechanical calls.
 
 ---
 
@@ -103,12 +105,13 @@ Three rules, in priority order:
 **Pattern C — Local draft → spec → finalize → review**
 1. Explore the approach with a cheap local model (unsloth-coder or Qwen3.6-35B).
 2. You turn the working draft into a precise spec.
-3. Qwen3.5-397B produces the clean, final implementation via `local_generate`.
+3. DeepSeek-V4-Pro produces the clean, final implementation via `local_generate`
+   (reasoning `high` applies automatically).
 4. You review the result for correctness; iterate the spec if needed.
 
 **Pattern D — Ensemble second opinion**
 1. For a high-stakes decision, `local_batch` the same prompt across
-   Qwen-397B + DeepSeek-V4-Pro + gpt-oss-120b.
+   DeepSeek-V4-Pro + Qwen-397B + gpt-oss-120b.
 2. You compare the three outputs, note agreement/disagreement, synthesize.
 
 ---
@@ -133,12 +136,19 @@ discovered list):
    substitute from the chains below and **state in your output which substitute you
    used**, so the provenance is never hidden.
 
+**Standing authorization (given 2026-08-21):** DeepSeek-V4-Pro now sits on the *main*
+code path, so its flakiness would otherwise block work outright. For DeepSeek failures
+you may substitute automatically along its chain below — without asking — provided you
+**name the model that actually ran** in your output. Rule 2 still applies to every other
+model. Note that "unavailable" means a real transport/HTTP failure: deep reasoning takes
+minutes, and a slow answer is not a dead model.
+
 ### Fallback chains (substitute in this order)
 
 | Unavailable model | Try next | Then |
 |---|---|---|
-| **DeepSeek-V4-Pro** (most fragile) | gpt-oss-120b | Qwen3.5-397B |
-| Qwen3.5-397B (heavy) | DeepSeek-V4-Pro | gpt-oss-120b |
+| **DeepSeek-V4-Pro** (code/heavy path; most fragile) | Qwen3.5-397B | gpt-oss-120b |
+| Qwen3.5-397B (second opinion) | DeepSeek-V4-Pro | gpt-oss-120b |
 | gpt-oss-120b | Qwen3.5-397B | DeepSeek-V4-Pro |
 | Qwen3.6-35B (fast/bulk) | unsloth-qwen2.5-coder:7b (small tasks) | Qwen3.5-397B (slower, costlier compute) |
 | unsloth-coder:7b | Qwen3.6-35B | Qwen3.5-397B |
@@ -147,6 +157,24 @@ Note the trade-offs when you announce a fallback: substituting a heavy model for
 fast bulk model (Qwen-35B → Qwen-397B) makes a `local_batch` much slower; warn the
 user if the batch is large. Substituting away from a code model onto a general model
 may lower code quality — say so.
+
+### Reasoning depth
+
+`local_generate` / `local_batch` take a `reasoning` parameter: `off`, `low`, `medium`,
+`high`, `max`. Omit it and each model uses its own default — DeepSeek-V4-Pro reasons at
+`high`, everything else at `off`. So the code route needs no extra argument; that is the
+point of the setup.
+
+- Reasoning shares the completion budget with the answer, so leaving `max_tokens` unset
+  is deliberate: the server picks a budget that fits the depth.
+- Pass `reasoning="off"` for cheap mechanical calls on DeepSeek — deep thinking costs
+  minutes of latency.
+- `reasoning="max"` for genuinely hard logic only.
+- The chain of thought is never returned to you (it would burn the very budget this
+  server protects); `reasoning_chars` in the result tells you it ran.
+- `reasoning` in a result means *what was requested*. Some models — Qwen3.6-35B among
+  them — think on their own regardless, so `reasoning: "off"` with a non-zero
+  `reasoning_chars` is normal, not a contradiction.
 
 ### Health check before big runs
 

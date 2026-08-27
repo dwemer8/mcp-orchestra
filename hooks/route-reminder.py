@@ -21,8 +21,9 @@ import json
 import sys
 
 # Model IDs exactly as discovered on the gateway (server.py --list-models).
-M_HEAVY = "Qwen/Qwen3.5-397B-A17B-FP8"   # final/production code, heavy generation
-M_BULK = "Qwen/Qwen3.6-35B-A3B"          # fan-out, classify, filter, compress
+M_CODE = "deepseek-ai/DeepSeek-V4-Pro"    # final/production code + heavy generation, reasoning=high
+M_SECOND = "Qwen/Qwen3.5-397B-A17B-FP8"   # second opinion, and the pre-authorized fallback for M_CODE
+M_BULK = "Qwen/Qwen3.6-35B-A3B"           # fan-out, classify, filter, compress
 
 # Keyword triggers. Russian + English, lowercase substring match. Kept broad on
 # purpose — a false positive costs a few tokens of reminder; a false negative
@@ -68,7 +69,9 @@ def build_context(prompt: str) -> str:
     if "code" in cats:
         lines.append(
             f'  - final/production code from a settled spec -> '
-            f'local_generate(model="{M_HEAVY}"). Yours: spec + review, not typing it out.'
+            f'local_generate(model="{M_CODE}") — it reasons at "high" by default, no '
+            f'parameter needed. Yours: spec + review, not typing it out. '
+            f'If it is down, auto-fallback to "{M_SECOND}" is pre-authorized — say which one ran.'
         )
     if "bulk" in cats:
         lines.append(
