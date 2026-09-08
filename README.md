@@ -4,7 +4,7 @@ MCP stdio server exposing local OpenAI-compatible chat models to Claude Code.
 
 The server discovers model IDs from `GET $LOCAL_BASE_URL$LOCAL_MODELS_PATH` at startup. It does not hardcode model names. If model discovery fails, the server exits with an actionable error instead of falling back silently.
 
-For an Open WebUI gateway, set `LOCAL_BASE_URL=https://<your-gateway-host>/api`, `LOCAL_MODELS_PATH=/models`, and `LOCAL_CHAT_COMPLETIONS_PATH=/chat/completions`. The endpoint URL is private — keep it in `.env` (gitignored), never in committed files.
+For this gateway (a LiteLLM-style OpenAI-compatible proxy), set `LOCAL_BASE_URL=https://<your-gateway-host>` (no `/api` or `/v1` suffix), `LOCAL_MODELS_PATH=/models`, and `LOCAL_CHAT_COMPLETIONS_PATH=/chat/completions`. The endpoint URL is private — keep it in `.env` (gitignored), never in committed files.
 
 ## Install
 
@@ -13,7 +13,7 @@ deps, writes `.env`, verifies connectivity, and registers the server with Claude
 
 ```bash
 cd agents
-LOCAL_API_KEY='<your key>' LOCAL_BASE_URL='https://<your-gateway-host>/api' bash setup.sh
+LOCAL_API_KEY='<your key>' LOCAL_BASE_URL='https://<your-gateway-host>' bash setup.sh
 ```
 
 See `DEPLOYMENT.md` for the full bootstrap (including the playbook and Codex). Manual
@@ -31,7 +31,7 @@ pip install -r requirements.txt
 Environment variables:
 
 ```bash
-export LOCAL_BASE_URL=https://your-gateway-host/api
+export LOCAL_BASE_URL=https://your-gateway-host
 export LOCAL_MODELS_PATH=/models
 export LOCAL_CHAT_COMPLETIONS_PATH=/chat/completions
 export LOCAL_API_KEY=
@@ -93,32 +93,49 @@ model's default depth:
 
 | Model | Default |
 |---|---|
-| `deepseek-ai/DeepSeek-V4-Pro` | `high` |
+| `zai-org/GLM-5.3` | `max` |
 | everything else | `off` |
 
-This is why the code route needs no extra argument. Mechanics, measured against the
-live gateway:
+This is why the code route needs no extra argument. Which request fields actually switch
+thinking differs per model family, so `server.py` keeps a small profile table
+(`REASONING_PROFILES`). Measured against the live gateway on 2026-09-08:
 
-- Two request fields are involved, and they are **not** symmetric.
-  `chat_template_kwargs.thinking` is the actual switch; `reasoning_effort` only grades
-  depth while thinking is on — sent alone it is silently ignored. `LOCAL_REASONING_FIELDS`
-  (`effort+thinking` | `thinking` | `off`) exists as an escape hatch if an endpoint
-  rejects one of them.
+| Profile | Models | Switch | Depth |
+|---|---|---|---|
+| `glm` | `zai-org/GLM-5.3` | `chat_template_kwargs.reasoning_effort` (`low` = no thinking) | `low` / `high` (one-line thought) / `max` (full). Server levels map `off`→`low`, `medium`→`high`. |
+| `qwen3` | `Qwen/Qwen3.6-35B-A3B`, `Qwen/Qwen3.5-397B-A17B-FP8` | `chat_template_kwargs.enable_thinking: false` | not gradable — any level but `off` is "on" at the model's own depth |
+| `default` | gpt-oss-120b, unsloth-coder, gemma, … | none — the fields are ignored | — |
+
+Two fields are actively harmful outside their profile and are never sent there:
+`enable_thinking: false` makes the proxy stop separating GLM's reasoning, so `</think>`
+leaks into `content`, and on the ollama coder model it yields garbage starting with
+`<|im_start|>`. `chat_template_kwargs.thinking` and the top-level `reasoning_effort` are
+inert on every model here; they are still sent for the "on" levels because they are
+harmless, and `LOCAL_REASONING_FIELDS` (`effort+thinking` | `thinking` | `off`) exists as
+an escape hatch if an endpoint starts rejecting one of them.
+
 - Reasoning is billed inside `completion_tokens`, so the answer and the chain of thought
   share one budget. Leave `max_tokens` unset and the server picks one that fits the depth:
-  32768 when reasoning is on, 8192 otherwise.
+  32768 for any level but `off`, 8192 otherwise.
 - The chain of thought is **not** returned — reading it would burn the orchestrator budget
   this server exists to protect. `reasoning_chars` reports its size instead.
-- `reasoning` in a result is *what was requested*. Some models (Qwen3.6-35B among them)
-  reason on their own regardless, so `reasoning: "off"` alongside a non-zero
-  `reasoning_chars` is expected, not a contradiction.
-- `usage.reasoning_tokens` is unreliable and model-dependent: DeepSeek-V4-Pro reports `0`
-  even after a 1000+ character chain of thought, while Qwen3.6-35B fills it in. Trust
-  `reasoning_chars`, which is measured from the response itself.
+- `reasoning` in a result is *what was requested*. gpt-oss-120b reasons a little on its
+  own regardless, so `reasoning: "off"` alongside a small non-zero `reasoning_chars` is
+  expected there, not a contradiction.
+- `reasoning_tokens` is read from `usage.completion_tokens_details` when the top level of
+  `usage` lacks it — this proxy reports it there. `reasoning_chars` is measured from the
+  response itself and is the number to trust.
 - If the endpoint rejects the reasoning fields (HTTP 400/422), the call is retried once
   without them and the result carries `reasoning_downgraded: true` rather than failing.
 - If a model returns its answer in `reasoning_content` and leaves `content` empty, that
-  text is used as the answer and flagged with `content_from_reasoning: true`.
+  text is used as the answer and flagged with `content_from_reasoning: true` — unless
+  `finish_reason` is `length`, in which case it is a truncated chain of thought and the
+  call is reported as `ok: false` with the budget diagnostic instead.
+- gpt-oss-120b rejects `reasoning_effort: "max"` with HTTP 400; the call is retried
+  without the reasoning fields and comes back with `reasoning_downgraded: true`.
+- Through the current gateway `unclemusclez/unsloth-qwen2.5-coder:7b` returns garbage
+  starting with `<|im_start|>` on ordinary prompts (measured 2026-09-08, a proxy-side
+  problem). Prefer Qwen3.6-35B for cheap drafts until that is fixed.
 
 ## Runtime Behavior
 
@@ -135,7 +152,7 @@ live gateway:
 ## Codex on/off (optional)
 
 Codex is **optional**. Out of the box this repo runs Codex-disabled: final code from a
-settled spec is routed to **DeepSeek-V4-Pro** (reasoning `high`) via `local_generate`, and
+settled spec is routed to **GLM-5.3** (reasoning `max`) via `local_generate`, and
 Claude reviews the result. Everything works with the local models alone — no Codex install,
 login, or subscription needed.
 
@@ -143,7 +160,7 @@ The routing playbook has two variants under `playbooks/` and `ORCHESTRATION_PLAY
 is a symlink to the active one. Flip between them with:
 
 ```bash
-./codex-toggle.sh off      # default: final code -> DeepSeek-V4-Pro (reasoning high), Claude reviews
+./codex-toggle.sh off      # default: final code -> GLM-5.3 (reasoning max), Claude reviews
 ./codex-toggle.sh on       # final code -> Codex (installs/enable steps printed if missing)
 ./codex-toggle.sh status   # show the active playbook + plugin state
 ```

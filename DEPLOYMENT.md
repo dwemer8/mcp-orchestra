@@ -44,7 +44,7 @@ Keep it in version control; porting is just `git clone`. **Never commit `.env`**
 
 ```bash
 cd agents
-LOCAL_API_KEY='<the key>' LOCAL_BASE_URL='https://<your-gateway-host>/api' bash setup.sh
+LOCAL_API_KEY='<the key>' LOCAL_BASE_URL='https://<your-gateway-host>' bash setup.sh
 ```
 
 `setup.sh` is path-independent and idempotent. It:
@@ -196,11 +196,11 @@ If Claude calls the tool, gets parallel results, and reports a shortlist — the
 - **`.env` is gitignored.** Re-create it per container via `setup.sh` (it copies `.env.example`).
 - **`server.py` auto-loads `.env`** from its own directory; exported env vars / `--env` still win.
 - **MCP is user scope**, so it works from any working directory in the container — not just `/workspace`.
-- **Endpoint is Open WebUI**, hence `/api` (not `/v1`) and explicit `*_PATH` vars. For a raw
-  OpenAI-compatible server set `LOCAL_BASE_URL=.../v1`, `LOCAL_MODELS_PATH=/models`,
-  `LOCAL_CHAT_COMPLETIONS_PATH=/chat/completions`.
-- **If a model (esp. DeepSeek-V4-Pro) is down**, that's expected — the playbook's §4 fallback
-  governs behavior. Not a deployment failure.
+- **Endpoint is a LiteLLM-style proxy**: `LOCAL_BASE_URL` is the bare host (no `/api`, no
+  `/v1`), with `LOCAL_MODELS_PATH=/models` and `LOCAL_CHAT_COMPLETIONS_PATH=/chat/completions`.
+  For a raw `/v1` server set `LOCAL_BASE_URL=.../v1` and keep the same `*_PATH` values.
+- **If a model (esp. the heavy code model, GLM-5.3) is down**, that's expected — the
+  playbook's §4 fallback governs behavior. Not a deployment failure.
 - **Codex write tasks failing with `bwrap: No permissions to create a new namespace`** = the
   sandbox gotcha in step 3c, not a broken install. Read-only Codex still works; apply 3c (or
   fix the container host-side) to enable write mode. Re-check after every codex plugin update.

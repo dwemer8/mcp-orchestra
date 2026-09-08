@@ -20,8 +20,8 @@ from mcp.server.fastmcp import FastMCP
 DEFAULT_BASE_URL = ""  # no baked-in default; the endpoint is private — set LOCAL_BASE_URL in .env
 DEFAULT_MAX_CONCURRENCY = 8
 # Reasoning-heavy code generation runs for minutes, not seconds. The old 120s cut
-# DeepSeek off mid-thought, which surfaced as "model unreachable" and tripped the
-# playbook's fallback discipline for what was really just an impatient client.
+# the code model off mid-thought, which surfaced as "model unreachable" and tripped
+# the playbook's fallback discipline for what was really just an impatient client.
 DEFAULT_TIMEOUT_SECONDS = 1800.0
 DEFAULT_MODELS_PATH = "/models"
 DEFAULT_CHAT_COMPLETIONS_PATH = "/chat/completions"
@@ -34,25 +34,43 @@ MAX_ATTEMPTS = 3
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 # --- Reasoning -------------------------------------------------------------
-# Two levers, and they are not symmetric (measured against the live gateway):
-#   chat_template_kwargs.thinking  — the actual on/off switch
-#   reasoning_effort               — grades the depth, but ONLY while thinking is on;
-#                                    sent alone it is silently ignored.
+# What actually switches thinking differs per model family on this gateway
+# (measured 2026-09-08 against the live proxy):
+#   GLM-5.3 reads only chat_template_kwargs.reasoning_effort, with values
+#     low | high | max — anything else, "medium" included, behaves as "max";
+#     "low" is no thinking, "high" a one-line thought, "max" full thinking.
+#     The top-level reasoning_effort never reaches the template, and
+#     enable_thinking: false makes reasoning leak into content: never send it.
+#   Qwen3 on SGLang switches off only via chat_template_kwargs.enable_thinking:
+#     false; thinking: false does nothing. The top-level reasoning_effort is
+#     harmless but does not change depth.
+#   Every other model ignores these fields, and enable_thinking: false breaks
+#     the ollama coder model (garbage output starting with <|im_start|>):
+#     never send it to the default profile.
 # The level names come from SGLang itself, which rejects anything else with
 # "Input should be 'low', 'medium', 'high' or 'max'". "off" is ours.
 REASONING_LEVELS = ("off", "low", "medium", "high", "max")
 # Per-model defaults, applied when a caller passes no explicit level. This is what
 # makes the code route reason deeply without every call having to remember to ask.
 MODEL_REASONING_DEFAULTS = {
-    "deepseek-ai/DeepSeek-V4-Pro": "high",
+    "zai-org/GLM-5.3": "max",
 }
-# Which fields to actually send. "effort+thinking" is correct for this gateway;
+# The field set each model actually responds to; see the measurements above.
+REASONING_PROFILES = {
+    "zai-org/GLM-5.3": "glm",
+    "Qwen/Qwen3.6-35B-A3B": "qwen3",
+    "Qwen/Qwen3.5-397B-A17B-FP8": "qwen3",
+}
+DEFAULT_REASONING_PROFILE = "default"
+# GLM's template only understands low | high | max; map our levels onto them.
+GLM_TEMPLATE_EFFORT = {"off": "low", "low": "low", "medium": "high", "high": "high", "max": "max"}
+# Which fields to actually send. "effort+thinking" is the full set for this gateway;
 # the narrower values exist as an escape hatch if a future endpoint rejects one.
 DEFAULT_REASONING_FIELDS = "effort+thinking"
 REASONING_FIELD_MODES = ("effort+thinking", "thinking", "off")
 # Reasoning is billed inside completion_tokens, so the visible answer and the chain
-# of thought share one budget. 8192 truncates real code tasks; DeepSeek's context is
-# 250k, so 32k is comfortable.
+# of thought share one budget. 8192 truncates real code tasks; the code model's
+# context is far larger than 32k, so 32k is comfortable.
 DEFAULT_REASONING_MAX_TOKENS = 32768
 # Status codes that mean "the endpoint disliked the request body" — the trigger for
 # one retry with the reasoning fields stripped.
@@ -250,10 +268,32 @@ def normalize_content(content: Any) -> str:
 
 
 def usage_token_count(usage: dict[str, Any] | None, key: str) -> int | None:
+    """Read a token counter out of a usage block, top level first.
+
+    The proxy reports reasoning tokens at
+    usage["completion_tokens_details"]["reasoning_tokens"] rather than at the top
+    level of usage, so the nested details dict is the fallback.
+
+    Args:
+        usage: The usage object from a completion response, or None.
+        key: The counter name to read, e.g. "reasoning_tokens".
+
+    Returns:
+        The int found at usage[key] or at
+        usage["completion_tokens_details"][key], or None when usage is not a
+        dict or neither lookup yields an int.
+    """
     if not isinstance(usage, dict):
         return None
     value = usage.get(key)
-    return value if isinstance(value, int) else None
+    if isinstance(value, int):
+        return value
+    details = usage.get("completion_tokens_details")
+    if isinstance(details, dict):
+        nested = details.get(key)
+        if isinstance(nested, int):
+            return nested
+    return None
 
 
 def resolve_reasoning(model: str, requested: str) -> str:
@@ -270,6 +310,22 @@ def resolve_reasoning(model: str, requested: str) -> str:
             f"Unknown reasoning level {requested!r}. Valid levels: {', '.join(REASONING_LEVELS)}."
         )
     return level
+
+
+def reasoning_profile(model: str) -> str:
+    """Return the reasoning profile that applies to a model.
+
+    The profile names the field set that actually switches thinking for that
+    model on this gateway; see the measurement notes above the constants.
+
+    Args:
+        model: The model id from the request.
+
+    Returns:
+        The profile name from REASONING_PROFILES, or
+        DEFAULT_REASONING_PROFILE for models without a measured field set.
+    """
+    return REASONING_PROFILES.get(model, DEFAULT_REASONING_PROFILE)
 
 
 def reasoning_report(completion: ChatCompletion) -> dict[str, Any]:
@@ -289,15 +345,52 @@ def reasoning_report(completion: ChatCompletion) -> dict[str, Any]:
     return report
 
 
-def reasoning_payload_fields(level: str, mode: str) -> dict[str, Any]:
-    """Build the request fields that turn reasoning on at the requested depth.
+def reasoning_payload_fields(level: str, mode: str, profile: str) -> dict[str, Any]:
+    """Build the request fields that switch thinking on for a model.
 
-    thinking is the switch; reasoning_effort only grades depth while it is on, so
-    sending effort without thinking would look configured but do nothing.
+    The field that actually flips the switch differs per model family on this
+    gateway, so the profile selects the field set and the level fills in the
+    values.
+
+    Args:
+        level: Requested reasoning level; one of REASONING_LEVELS.
+        mode: One of REASONING_FIELD_MODES. "off" returns no fields for any
+            profile; "effort+thinking" also sends the top-level
+            reasoning_effort; "thinking" sends template kwargs only.
+        profile: A profile name from REASONING_PROFILES, or
+            DEFAULT_REASONING_PROFILE; unknown names behave as "default".
+
+    Returns:
+        The request fields to merge into the completion payload. Empty when
+        the mode is "off", or when reasoning is off and the profile sends
+        nothing for that.
+
+    Never send enable_thinking to GLM: the proxy stops separating reasoning
+    and it leaks into content. Never send enable_thinking to the default
+    profile: it breaks the ollama coder model with garbage output.
     """
-    if level == "off" or mode == "off":
+    if level not in REASONING_LEVELS:
+        raise ValueError(
+            f"Unknown reasoning level {level!r}. Valid levels: {', '.join(REASONING_LEVELS)}."
+        )
+    if mode == "off":
+        # Escape hatch: no reasoning fields at all, whatever the profile.
         return {}
-    fields: dict[str, Any] = {"chat_template_kwargs": {"thinking": True}}
+    if profile == "glm":
+        # GLM's template reads only reasoning_effort; "low" is its no-thinking value.
+        fields: dict[str, Any] = {
+            "chat_template_kwargs": {"reasoning_effort": GLM_TEMPLATE_EFFORT[level]}
+        }
+        if mode == "effort+thinking" and level != "off":
+            # Inert on GLM, kept so the mode means the same thing across profiles.
+            fields["reasoning_effort"] = level
+        return fields
+    if level == "off":
+        if profile == "qwen3":
+            # The only switch that actually stops Qwen3's thinking.
+            return {"chat_template_kwargs": {"enable_thinking": False}}
+        return {}
+    fields = {"chat_template_kwargs": {"thinking": True}}
     if mode == "effort+thinking":
         fields["reasoning_effort"] = level
     return fields
@@ -551,11 +644,14 @@ class LocalLLMService:
         messages.append({"role": "user", "content": prompt})
 
         level = resolve_reasoning(model, reasoning)
-        reasoning_fields = reasoning_payload_fields(level, self.config.reasoning_fields)
+        profile = reasoning_profile(model)
+        reasoning_fields = reasoning_payload_fields(level, self.config.reasoning_fields, profile)
         if max_tokens is None:
             # Reasoning shares the completion budget with the visible answer, so the
             # normal default would spend itself on thinking and truncate the result.
-            max_tokens = DEFAULT_REASONING_MAX_TOKENS if reasoning_fields else DEFAULT_MAX_TOKENS
+            # Budget by the level, not by whether fields were built: "off" still
+            # sends fields for some profiles.
+            max_tokens = DEFAULT_REASONING_MAX_TOKENS if level != "off" else DEFAULT_MAX_TOKENS
 
         payload = {
             "model": model,
@@ -619,16 +715,18 @@ class LocalLLMService:
         else:
             content = normalize_content(first_choice.get("text"))
 
-        # Some builds put the whole answer in the reasoning field and leave content
-        # empty. That is a usable answer, not the empty-response failure it looks like.
-        content_from_reasoning = False
-        if not content.strip() and reasoning_text.strip():
-            content = reasoning_text
-            content_from_reasoning = True
-
         finish_reason = first_choice.get("finish_reason")
         if not isinstance(finish_reason, str):
             finish_reason = None
+
+        # Some builds put the whole answer in the reasoning field and leave content
+        # empty. That is a usable answer, not the empty-response failure it looks like.
+        # Not when the budget ran out mid-thought, though: then the reasoning is a
+        # truncated chain of thought, not an answer, and the diagnostic must fire.
+        content_from_reasoning = False
+        if not content.strip() and reasoning_text.strip() and finish_reason != "length":
+            content = reasoning_text
+            content_from_reasoning = True
 
         usage = response_payload.get("usage") if isinstance(response_payload, dict) else None
         return ChatCompletion(
@@ -758,8 +856,10 @@ async def local_generate(
     """Generate one chat completion using a discovered local model.
 
     reasoning: "off", "low", "medium", "high" or "max". Leave empty to use the
-    model's default depth — DeepSeek-V4-Pro reasons at "high" unless told otherwise.
-    Deep reasoning costs latency and completion tokens, so pass "off" for cheap work.
+    model's default depth — GLM-5.3 reasons at "max" unless told otherwise. "off"
+    really stops the thinking on GLM-5.3 and the Qwen3 models; other models ignore
+    the parameter. Deep reasoning costs latency and completion tokens, so pass "off"
+    for cheap work.
     max_tokens: leave unset to get a budget that fits the chosen reasoning depth.
     The chain of thought is not returned; reasoning_chars reports its size.
     """

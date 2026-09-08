@@ -31,7 +31,7 @@ If you didn't write that line, you skipped the gate. No silent "I'll just do it 
 - About to **read a large blob** (logs, transcripts, search dumps, multi-file context) →
   **`local_compress`** it first, then read the concentrate.
 - About to write a **throwaway/exploratory draft** of code → local model
-  (unsloth-coder or Qwen3.6-35B), not your own tokens, not Codex, not DeepSeek.
+  (unsloth-coder or Qwen3.6-35B), not your own tokens, not Codex, not GLM-5.3.
 
 **Always yours, never delegated:** decomposition, judgment calls, hypothesis design,
 final synthesis, and correctness review of anything a model produced.
@@ -53,11 +53,16 @@ codex-plugin-cc. You are Claude Code.
 |---|---|---|
 | Decomposition, final analysis, decisions, hypothesis design | **You (Claude)** | — native |
 | Final/production code from a clear spec | **Codex** | codex plugin |
-| Heavy generation, long reasoning, best-quality drafts | **DeepSeek-V4-Pro** (reasoning `high` by default) | `local_generate` |
+| Heavy generation, long reasoning, best-quality drafts | **GLM-5.3** (reasoning `max` by default) | `local_generate` |
 | Second opinion / alternative approach | Qwen3.5-397B-A17B-FP8, then gpt-oss-120b | `local_generate` / `local_batch` |
 | Mass candidate fan-out, classification, filtering | Qwen3.6-35B-A3B | `local_batch` |
 | Context compression before you read | Qwen3.6-35B-A3B | `local_compress` |
 | Cheap/bulk code drafts (not final) | unsloth-qwen2.5-coder:7b | `local_generate` |
+
+**Known breakage (2026-09-08):** through the current gateway `unsloth-qwen2.5-coder:7b`
+returns garbage that starts with `<|im_start|>` on ordinary prompts (a proxy/template
+problem, not the model). Until that is fixed, use Qwen3.6-35B for cheap code drafts and
+treat any coder output containing `<|im_start|>` as a failed call.
 
 Utility models present on the endpoint but **not wired as tools yet** (do not call
 them as chat models — they will return garbage): `nomic-embed-text` (embeddings),
@@ -83,8 +88,8 @@ Three rules, in priority order:
 
 3. **Codex is for final code only.** Draft/explore code locally
    (unsloth-coder or Qwen3.6-35B), hand Codex a *clear spec* for the clean version.
-   Don't burn Codex turns on exploration. If Codex is unavailable, DeepSeek-V4-Pro
-   (reasoning `high`) is the local stand-in for final code.
+   Don't burn Codex turns on exploration. If Codex is unavailable, GLM-5.3
+   (reasoning `max`) is the local stand-in for final code.
 
 ---
 
@@ -102,21 +107,20 @@ Three rules, in priority order:
 3. You read the concentrate and reason over it.
 
 **Pattern C — Local draft → Codex finalize**
-1. Explore the approach with a local model (DeepSeek-V4-Pro for hard logic).
+1. Explore the approach with a local model (GLM-5.3 for hard logic).
 2. You turn the working draft into a precise spec.
 3. Codex produces the clean, final implementation.
 
 **Pattern D — Ensemble second opinion**
 1. For a high-stakes decision, `local_batch` the same prompt across
-   DeepSeek-V4-Pro + Qwen-397B + gpt-oss-120b.
+   GLM-5.3 + Qwen-397B + gpt-oss-120b.
 2. You compare the three outputs, note agreement/disagreement, synthesize.
 
 ---
 
 ## 4. Fallback discipline — REQUIRED
 
-**Local models may be unavailable, intermittently. DeepSeek-V4-Pro is the least
-reliable and goes down most often.** Never assume a model is up. Handle this
+**Local models may be unavailable, intermittently.** Never assume a model is up. Handle this
 explicitly and visibly — never silently swap models, because which model produced
 a result is itself analytically relevant.
 
@@ -126,15 +130,15 @@ When a `local_*` call errors (timeout, 5xx, connection refused, model not in the
 discovered list):
 
 1. **Stop and tell the user, plainly:** which model failed, on which task, and the
-   error (e.g. "DeepSeek-V4-Pro is unreachable — request timed out after 120s").
+   error (e.g. "GLM-5.3 is unreachable — request timed out after 1800s").
 2. **Do not silently substitute.** Offer the fallback options below and let the user
    pick — unless they've already given standing instructions to auto-fallback.
 3. If the user has pre-authorized auto-fallback, proceed with the first available
    substitute from the chains below and **state in your output which substitute you
    used**, so the provenance is never hidden.
 
-**Standing authorization (given 2026-08-21):** DeepSeek-V4-Pro now carries the heavy
-local path, so its flakiness would otherwise block work outright. For DeepSeek failures
+**Standing authorization (given 2026-08-21):** the heavy local model (now GLM-5.3)
+carries the heavy path, so an outage there would block work outright. For GLM-5.3 failures
 you may substitute automatically along its chain below — without asking — provided you
 **name the model that actually ran** in your output. Rule 2 still applies to every other
 model. Note that "unavailable" means a real transport/HTTP failure: deep reasoning takes
@@ -144,9 +148,9 @@ minutes, and a slow answer is not a dead model.
 
 | Unavailable model | Try next | Then |
 |---|---|---|
-| **DeepSeek-V4-Pro** (heavy path; most fragile) | Qwen3.5-397B | gpt-oss-120b |
-| Qwen3.5-397B (second opinion) | DeepSeek-V4-Pro | gpt-oss-120b |
-| gpt-oss-120b | Qwen3.5-397B | DeepSeek-V4-Pro |
+| **GLM-5.3** (heavy path) | Qwen3.5-397B | gpt-oss-120b |
+| Qwen3.5-397B (second opinion) | GLM-5.3 | gpt-oss-120b |
+| gpt-oss-120b | Qwen3.5-397B | GLM-5.3 |
 | Qwen3.6-35B (fast/bulk) | unsloth-qwen2.5-coder:7b (small tasks) | Qwen3.5-397B (slower, costlier compute) |
 | unsloth-coder:7b | Qwen3.6-35B | Qwen3.5-397B |
 
@@ -158,17 +162,22 @@ may lower code quality — say so.
 ### Reasoning depth
 
 `local_generate` / `local_batch` take a `reasoning` parameter: `off`, `low`, `medium`,
-`high`, `max`. Omit it and each model uses its own default — DeepSeek-V4-Pro reasons at
-`high`, everything else at `off`.
+`high`, `max`. Omit it and each model uses its own default — GLM-5.3 reasons at
+`max`, everything else at `off`.
 
 - Reasoning shares the completion budget with the answer, so leaving `max_tokens` unset
   is deliberate: the server picks a budget that fits the depth.
-- Pass `reasoning="off"` for cheap mechanical calls on DeepSeek — deep thinking costs
-  minutes of latency. `reasoning="max"` for genuinely hard logic only.
+- What a level does depends on the model (measured 2026-09-08). GLM-5.3 knows three
+  depths: `off`/`low` → no thinking, `medium`/`high` → a one-line thought, `max` → full
+  thinking. On Qwen3.6-35B and Qwen3.5-397B `off` really stops the thinking and every
+  other level is simply "on" at the model's own depth. gpt-oss-120b and unsloth-coder
+  ignore the parameter entirely.
+- Pass `reasoning="off"` for cheap mechanical calls on GLM-5.3 — full thinking costs
+  minutes of latency. Keep `max` (the GLM default) for real code and hard logic.
 - The chain of thought is never returned to you; `reasoning_chars` tells you it ran.
-- `reasoning` in a result means *what was requested*. Some models — Qwen3.6-35B among
-  them — think on their own regardless, so `reasoning: "off"` with a non-zero
-  `reasoning_chars` is normal, not a contradiction.
+- `reasoning` in a result means *what was requested*. gpt-oss-120b thinks a little on
+  its own regardless, so `reasoning: "off"` with a small non-zero `reasoning_chars` is
+  normal there, not a contradiction.
 
 ### Health check before big runs
 

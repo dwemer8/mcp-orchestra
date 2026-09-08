@@ -3,7 +3,7 @@
 # Codex-disabled routing, and enable/disable the Codex plugin in Claude Code to match.
 #
 #   ./codex-toggle.sh on      # route final code to Codex (plugin must be installed)
-#   ./codex-toggle.sh off     # route final code to Qwen3.5-397B (no Codex)
+#   ./codex-toggle.sh off     # route final code to GLM-5.3 (no Codex)
 #   ./codex-toggle.sh status  # show current state
 #
 # The change takes effect in NEW Claude Code sessions (context is read at startup).
@@ -56,7 +56,7 @@ case "${1:-status}" in
     ;;
   off)
     ln -sfn "$OFF_TARGET" "$LINK"
-    echo "Playbook -> $OFF_TARGET (final code routes to Qwen3.5-397B, Claude reviews)"
+    echo "Playbook -> $OFF_TARGET (final code routes to GLM-5.3, Claude reviews)"
     if plugin_installed; then
       claude plugin disable "$PLUGIN" >/dev/null 2>&1 || true
       echo "Plugin   -> $PLUGIN disabled"
