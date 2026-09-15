@@ -23,7 +23,7 @@ If you didn't write that line, you skipped the gate. No silent "I'll just do it 
 **Hard triggers — if the task matches, the work is NOT yours by default:**
 
 - About to write **final/production code from a settled spec** → **GLM-5.3**
-  via `local_generate`. It reasons at `max` by default — you do not need to pass anything.
+  via `local_generate`. It reasons at `high` by default — you do not need to pass anything.
   Yours: the spec + decomposition + reviewing the produced code.
   Do **not** write it yourself "because it's faster" — that's the #1 leak.
 - About to produce **many similar items** (candidates, classifications, filters, drafts,
@@ -52,8 +52,8 @@ Local models are called through the MCP server tools: `local_generate`,
 | Work type | Agent / model | Tool |
 |---|---|---|
 | Decomposition, specs, final analysis, decisions, code review | **You (Claude)** | — native |
-| Final/production code from a clear spec | **GLM-5.3** (reasoning `max` by default) | `local_generate` |
-| Heavy generation, long reasoning, best-quality drafts | **GLM-5.3** (reasoning `max` by default) | `local_generate` |
+| Final/production code from a clear spec | **GLM-5.3** (reasoning `high` by default) | `local_generate` |
+| Heavy generation, long reasoning, best-quality drafts | **GLM-5.3** (reasoning `high` by default) | `local_generate` |
 | Second opinion / alternative approach (incl. on code) | Qwen3.5-397B-A17B-FP8, then gpt-oss-120b | `local_generate` / `local_batch` |
 | Mass candidate fan-out, classification, filtering | Qwen3.6-35B-A3B | `local_batch` |
 | Context compression before you read | Qwen3.6-35B-A3B | `local_compress` |
@@ -112,7 +112,7 @@ Three rules, in priority order:
 1. Explore the approach with a cheap local model (unsloth-coder or Qwen3.6-35B).
 2. You turn the working draft into a precise spec.
 3. GLM-5.3 produces the clean, final implementation via `local_generate`
-   (reasoning `max` applies automatically).
+   (reasoning `high` applies automatically).
 4. You review the result for correctness; iterate the spec if needed.
 
 **Pattern D — Ensemble second opinion**
@@ -167,18 +167,19 @@ may lower code quality — say so.
 
 `local_generate` / `local_batch` take a `reasoning` parameter: `off`, `low`, `medium`,
 `high`, `max`. Omit it and each model uses its own default — GLM-5.3 reasons at
-`max`, everything else at `off`. So the code route needs no extra argument; that is the
+`high`, everything else at `off`. So the code route needs no extra argument; that is the
 point of the setup.
 
 - Reasoning shares the completion budget with the answer, so leaving `max_tokens` unset
   is deliberate: the server picks a budget that fits the depth.
 - What a level does depends on the model (measured 2026-09-08). GLM-5.3 knows three
   depths: `off`/`low` → no thinking, `medium`/`high` → a one-line thought, `max` → full
-  thinking. On Qwen3.6-35B and Qwen3.5-397B `off` really stops the thinking and every
-  other level is simply "on" at the model's own depth. gpt-oss-120b and unsloth-coder
-  ignore the parameter entirely.
-- Pass `reasoning="off"` for cheap mechanical calls on GLM-5.3 — full thinking costs
-  minutes of latency. Keep `max` (the GLM default) for real code and hard logic.
+  thinking. **`max` on GLM-5.3 is rejected** (`ok: false`, "use high") — full thinking
+  there costs thousands of tokens and minutes for little gain on code. On Qwen3.6-35B and
+  Qwen3.5-397B `off` really stops the thinking and every other level is simply "on" at
+  the model's own depth. gpt-oss-120b and unsloth-coder ignore the parameter entirely.
+- Pass `reasoning="off"` for cheap mechanical calls on GLM-5.3; the default `high` is
+  the level for real code and hard logic.
 - The chain of thought is never returned to you (it would burn the very budget this
   server protects); `reasoning_chars` in the result tells you it ran.
 - `reasoning` in a result means *what was requested*. gpt-oss-120b thinks a little on

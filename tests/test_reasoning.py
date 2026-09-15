@@ -23,9 +23,21 @@ QWEN3_LARGE = "Qwen/Qwen3.5-397B-A17B-FP8"
 # --- resolve_reasoning -----------------------------------------------------
 
 
-def test_resolve_reasoning_glm_default_is_max():
-    """An empty request on GLM falls back to the per-model default "max"."""
-    assert resolve_reasoning(GLM, "") == "max"
+def test_resolve_reasoning_glm_default_is_high():
+    """An empty request on GLM falls back to the per-model default "high"."""
+    assert resolve_reasoning(GLM, "") == "high"
+
+
+def test_resolve_reasoning_rejects_max_on_glm():
+    """An explicit "max" on GLM is an error that points the caller at "high"."""
+    with pytest.raises(ValueError, match='not allowed for model .*use "high"'):
+        resolve_reasoning(GLM, "max")
+
+
+@pytest.mark.parametrize("model", [QWEN3_SMALL, QWEN3_LARGE, "openai/gpt-oss-120b"])
+def test_resolve_reasoning_max_allowed_elsewhere(model):
+    """Only GLM rejects "max"; every other model still accepts it."""
+    assert resolve_reasoning(model, "max") == "max"
 
 
 def test_resolve_reasoning_unknown_model_defaults_to_off():
@@ -101,11 +113,15 @@ def test_glm_off_sends_template_low_without_top_level_effort():
         ("low", "low"),
         ("medium", "high"),
         ("high", "high"),
-        ("max", "max"),
+        ("max", "high"),
     ],
 )
 def test_glm_on_sends_template_effort_and_top_level(level, template_effort):
-    """GLM "on" levels map into the template and mirror the level at top level."""
+    """GLM "on" levels map into the template and mirror the level at top level.
+
+    "max" is rejected upstream in resolve_reasoning; the mapping to "high" here is
+    the safety net that keeps it from ever reaching the template.
+    """
     fields = reasoning_payload_fields(level, EFFORT_AND_THINKING, "glm")
     assert fields == {
         "chat_template_kwargs": {"reasoning_effort": template_effort},
@@ -115,8 +131,8 @@ def test_glm_on_sends_template_effort_and_top_level(level, template_effort):
 
 def test_glm_thinking_mode_omits_top_level_effort():
     """Mode "thinking" sends only the template kwargs for GLM."""
-    fields = reasoning_payload_fields("max", THINKING_ONLY, "glm")
-    assert fields == {"chat_template_kwargs": {"reasoning_effort": "max"}}
+    fields = reasoning_payload_fields("high", THINKING_ONLY, "glm")
+    assert fields == {"chat_template_kwargs": {"reasoning_effort": "high"}}
 
 
 @pytest.mark.parametrize("level", REASONING_LEVELS)

@@ -93,8 +93,12 @@ model's default depth:
 
 | Model | Default |
 |---|---|
-| `zai-org/GLM-5.3` | `max` |
+| `zai-org/GLM-5.3` | `high` |
 | everything else | `off` |
+
+GLM-5.3 also **rejects** an explicit `max` (`ok: false`, "use high instead"): full
+thinking there costs thousands of reasoning tokens and minutes of latency for little
+gain on code, so it is off the table rather than silently downgraded.
 
 This is why the code route needs no extra argument. Which request fields actually switch
 thinking differs per model family, so `server.py` keeps a small profile table
@@ -102,7 +106,7 @@ thinking differs per model family, so `server.py` keeps a small profile table
 
 | Profile | Models | Switch | Depth |
 |---|---|---|---|
-| `glm` | `zai-org/GLM-5.3` | `chat_template_kwargs.reasoning_effort` (`low` = no thinking) | `low` / `high` (one-line thought) / `max` (full). Server levels map `off`→`low`, `medium`→`high`. |
+| `glm` | `zai-org/GLM-5.3` | `chat_template_kwargs.reasoning_effort` (`low` = no thinking) | `low` / `high` (one-line thought) / `max` (full, never sent). Server levels map `off`→`low`, `medium`→`high`; `max` is rejected before the request is built. |
 | `qwen3` | `Qwen/Qwen3.6-35B-A3B`, `Qwen/Qwen3.5-397B-A17B-FP8` | `chat_template_kwargs.enable_thinking: false` | not gradable — any level but `off` is "on" at the model's own depth |
 | `default` | gpt-oss-120b, unsloth-coder, gemma, … | none — the fields are ignored | — |
 
@@ -152,7 +156,7 @@ an escape hatch if an endpoint starts rejecting one of them.
 ## Codex on/off (optional)
 
 Codex is **optional**. Out of the box this repo runs Codex-disabled: final code from a
-settled spec is routed to **GLM-5.3** (reasoning `max`) via `local_generate`, and
+settled spec is routed to **GLM-5.3** (reasoning `high`) via `local_generate`, and
 Claude reviews the result. Everything works with the local models alone — no Codex install,
 login, or subscription needed.
 
@@ -160,7 +164,7 @@ The routing playbook has two variants under `playbooks/` and `ORCHESTRATION_PLAY
 is a symlink to the active one. Flip between them with:
 
 ```bash
-./codex-toggle.sh off      # default: final code -> GLM-5.3 (reasoning max), Claude reviews
+./codex-toggle.sh off      # default: final code -> GLM-5.3 (reasoning high), Claude reviews
 ./codex-toggle.sh on       # final code -> Codex (installs/enable steps printed if missing)
 ./codex-toggle.sh status   # show the active playbook + plugin state
 ```

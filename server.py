@@ -52,8 +52,15 @@ RETRY_STATUSES = {429, 500, 502, 503, 504}
 REASONING_LEVELS = ("off", "low", "medium", "high", "max")
 # Per-model defaults, applied when a caller passes no explicit level. This is what
 # makes the code route reason deeply without every call having to remember to ask.
+# GLM-5.3's default is "high" (one-line thought): "max" spends thousands of
+# reasoning tokens and minutes of latency for little gain on code tasks.
 MODEL_REASONING_DEFAULTS = {
-    "zai-org/GLM-5.3": "max",
+    "zai-org/GLM-5.3": "high",
+}
+# Levels a model must not run at; an explicit request for one is an error, not a
+# silent downgrade, so the caller learns to ask for "high".
+MODEL_REJECTED_LEVELS = {
+    "zai-org/GLM-5.3": ("max",),
 }
 # The field set each model actually responds to; see the measurements above.
 REASONING_PROFILES = {
@@ -62,8 +69,9 @@ REASONING_PROFILES = {
     "Qwen/Qwen3.5-397B-A17B-FP8": "qwen3",
 }
 DEFAULT_REASONING_PROFILE = "default"
-# GLM's template only understands low | high | max; map our levels onto them.
-GLM_TEMPLATE_EFFORT = {"off": "low", "low": "low", "medium": "high", "high": "high", "max": "max"}
+# GLM's template understands low | high | max, but "max" is deliberately never sent
+# (see MODEL_REJECTED_LEVELS); the mapping still covers it as a safety net.
+GLM_TEMPLATE_EFFORT = {"off": "low", "low": "low", "medium": "high", "high": "high", "max": "high"}
 # Which fields to actually send. "effort+thinking" is the full set for this gateway;
 # the narrower values exist as an escape hatch if a future endpoint rejects one.
 DEFAULT_REASONING_FIELDS = "effort+thinking"
@@ -301,6 +309,19 @@ def resolve_reasoning(model: str, requested: str) -> str:
 
     An empty string means "caller did not say", which is what lets the code route get
     deep reasoning without every call site remembering to ask for it.
+
+    Args:
+        model: Model identifier whose per-model default and rejected levels apply.
+        requested: Explicitly requested reasoning level; empty (or None) when the
+            caller did not say.
+
+    Returns:
+        The resolved reasoning level: the validated explicit request, or the
+        model's default ("off" for models without one).
+
+    Raises:
+        ValueError: If `requested` is not a known level, or is a per-model
+            rejected level for this model.
     """
     level = (requested or "").strip().lower()
     if not level:
@@ -308,6 +329,10 @@ def resolve_reasoning(model: str, requested: str) -> str:
     if level not in REASONING_LEVELS:
         raise ValueError(
             f"Unknown reasoning level {requested!r}. Valid levels: {', '.join(REASONING_LEVELS)}."
+        )
+    if level in MODEL_REJECTED_LEVELS.get(model, ()):
+        raise ValueError(
+            f"Reasoning level {level!r} is not allowed for model {model!r}; use \"high\" instead."
         )
     return level
 
@@ -856,10 +881,10 @@ async def local_generate(
     """Generate one chat completion using a discovered local model.
 
     reasoning: "off", "low", "medium", "high" or "max". Leave empty to use the
-    model's default depth — GLM-5.3 reasons at "max" unless told otherwise. "off"
-    really stops the thinking on GLM-5.3 and the Qwen3 models; other models ignore
-    the parameter. Deep reasoning costs latency and completion tokens, so pass "off"
-    for cheap work.
+    model's default depth — GLM-5.3 reasons at "high" unless told otherwise, and
+    rejects "max" (ok:false; ask for "high"). "off" really stops the thinking on
+    GLM-5.3 and the Qwen3 models; other models ignore the parameter. Deep reasoning
+    costs latency and completion tokens, so pass "off" for cheap work.
     max_tokens: leave unset to get a budget that fits the chosen reasoning depth.
     The chain of thought is not returned; reasoning_chars reports its size.
     """
