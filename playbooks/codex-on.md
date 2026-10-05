@@ -16,7 +16,7 @@ This is a hard gate, not advice. **Before** you write code, generate/classify/fi
 summarize anything at volume, or read a large pile of material, STOP and state the
 route in one line, then act on it:
 
-> **Route:** mine = `<decomposition/judgment/synthesis/review>` · Codex = `<final code from spec>` · local = `<bulk/draft/compress, which model+tool>`
+> **Route:** mine = `<decomposition/judgment/synthesis/review>` · Codex = `<final code from spec / report text>` · local = `<bulk/draft/compress, which model+tool>`
 
 If you didn't write that line, you skipped the gate. No silent "I'll just do it myself."
 
@@ -25,6 +25,12 @@ If you didn't write that line, you skipped the gate. No silent "I'll just do it 
 - About to write **final/production code from a settled spec** → **Codex** (codex
   plugin). Yours: the spec + decomposition + reviewing Codex's output. Do **not** write
   it yourself "because it's faster" — that's the #1 leak.
+- About to write a **report** (tracker/YouTrack comment, PR/MR description, experiment
+  write-up, status update) → **Codex** (codex plugin). Yours: the brief — facts, measured
+  numbers with their sources, the required layout (CLAUDE.md report rules) and the
+  audience — plus the review: every number and claim checked against its source, nothing
+  invented, language per WRITING.md. Posting/publishing stays yours. A short answer in
+  chat is not a report and stays yours.
 - About to produce **many similar items** (candidates, classifications, filters, drafts,
   per-file edits) → **`local_batch`** on Qwen3.6-35B. You review the distilled shortlist,
   not the raw pile.
@@ -53,6 +59,7 @@ codex-plugin-cc. You are Claude Code.
 |---|---|---|
 | Decomposition, final analysis, decisions, hypothesis design | **You (Claude)** | — native |
 | Final/production code from a clear spec | **Codex** | codex plugin |
+| Reports: tracker comments, PR/MR descriptions, write-ups | **Codex** (you brief + review) | codex plugin |
 | Heavy generation, long reasoning, best-quality drafts | **GLM-5.3** (reasoning `high` by default) | `local_generate` |
 | Second opinion / alternative approach | Qwen3.5-397B-A17B-FP8, then gpt-oss-120b | `local_generate` / `local_batch` |
 | Mass candidate fan-out, classification, filtering | Qwen3.6-35B-A3B | `local_batch` |
@@ -86,10 +93,11 @@ Three rules, in priority order:
    context → send through `local_compress` first, then read the condensed version.
    One read of a concentrate beats ten reads of raw input.
 
-3. **Codex is for final code only.** Draft/explore code locally
-   (unsloth-coder or Qwen3.6-35B), hand Codex a *clear spec* for the clean version.
-   Don't burn Codex turns on exploration. If Codex is unavailable, GLM-5.3
-   (reasoning `high`) is the local stand-in for final code.
+3. **Codex is for final code and reports only.** Draft/explore code locally
+   (unsloth-coder or Qwen3.6-35B), hand Codex a *clear spec* for the clean version, or
+   a *complete brief* (facts + numbers + layout) for a report. Don't burn Codex turns on
+   exploration or on gathering the facts. If Codex is unavailable, GLM-5.3
+   (reasoning `high`) is the local stand-in for both.
 
 ---
 
@@ -148,6 +156,7 @@ minutes, and a slow answer is not a dead model.
 
 | Unavailable model | Try next | Then |
 |---|---|---|
+| **Codex** (final code, reports) | GLM-5.3 | Qwen3.5-397B |
 | **GLM-5.3** (heavy path) | Qwen3.5-397B | gpt-oss-120b |
 | Qwen3.5-397B (second opinion) | GLM-5.3 | gpt-oss-120b |
 | gpt-oss-120b | Qwen3.5-397B | GLM-5.3 |
