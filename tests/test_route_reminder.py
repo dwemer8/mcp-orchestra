@@ -67,3 +67,34 @@ def test_build_context_bulk_only():
     context = route_reminder.build_context(prompt, codex_on=True)
     assert "bulk" in context and "code" not in context.split("\n")[1]
     assert context == route_reminder.build_context(prompt, codex_on=False)
+
+
+def test_build_context_report_codex_on():
+    """Route reports through Codex with Claude as the only fallback."""
+    context = route_reminder.build_context("напиши отчёт по прогону", codex_on=True)
+    assert "report text" in context
+    assert "write the report yourself" in context
+    report_line = next(line for line in context.splitlines() if line.startswith("  - report text"))
+    assert "no fallback to GLM-5.3" in report_line
+    assert "local_generate" not in report_line
+
+
+def test_build_context_report_codex_off():
+    """Leave reports with Claude when Codex is disabled."""
+    context = route_reminder.build_context("напиши отчёт по прогону", codex_on=False)
+    assert "report text" not in context
+
+
+def test_build_context_youtrack_codex_on():
+    """Recognize mixed-case YouTrack requests as report text."""
+    context = route_reminder.build_context("оставь комментарий в YouTrack", codex_on=True)
+    assert "report text" in context
+
+
+def test_build_context_report_only_header():
+    """Mention Codex in the header for a report-only prompt."""
+    prompt = "сделай статус-апдейт для команды"
+    assert not any(k in prompt.lower() for k in route_reminder.CODE_KW)
+    context = route_reminder.build_context(prompt, codex_on=True)
+    assert context.splitlines()[1] == "This request looks like: report."
+    assert "delegate via Codex" in context.splitlines()[2]

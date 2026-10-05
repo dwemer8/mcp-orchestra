@@ -53,6 +53,12 @@ BIG_KW = (
     "большой файл", "проанализируй файл", "summar", "logs", "transcript",
     "dump", "large file", "analyze the file", "паст",
 )
+# Report text goes to Codex only in Codex mode.
+REPORT_KW = (
+    "отчёт", "отчет", "описание pr", "описание mr", "описание пр", "описание мр",
+    "youtrack", "ютрек", "статус-апдейт", "write-up", "writeup", "report",
+    "pr description", "mr description", "status update",
+)
 
 
 def codex_enabled(playbook_link: Path) -> bool:
@@ -78,7 +84,7 @@ def build_context(prompt: str, codex_on: bool = False) -> str:
 
     Args:
         prompt: User text to classify by routing keywords.
-        codex_on: Whether final code should be routed to Codex.
+        codex_on: Whether final code and report text should be routed to Codex.
 
     Returns:
         Applicable routing context, or an empty string if no keywords match.
@@ -91,6 +97,8 @@ def build_context(prompt: str, codex_on: bool = False) -> str:
         cats.append("bulk")
     if any(k in low for k in BIG_KW):
         cats.append("large-material")
+    if codex_on and any(k in low for k in REPORT_KW):
+        cats.append("report")
     if not cats:
         return ""
 
@@ -98,7 +106,7 @@ def build_context(prompt: str, codex_on: bool = False) -> str:
         "[Routing gate — orchestration playbook §0]",
         "This request looks like: " + ", ".join(cats) + ".",
         ("Before doing it yourself, state the one-line Route, then delegate via Codex or the"
-         if codex_on and "code" in cats else
+         if codex_on and ("code" in cats or "report" in cats) else
          "Before doing it yourself, state the one-line Route, then delegate via the"),
         "local-llm MCP tools. Applicable routes for this request:",
     ]
@@ -126,6 +134,14 @@ def build_context(prompt: str, codex_on: bool = False) -> str:
         lines.append(
             f'  - large blob to read (logs/transcripts/dumps) -> '
             f'local_compress on "{M_BULK}" first, then read the concentrate.'
+        )
+    if "report" in cats:
+        lines.append(
+            '  - report text (tracker comment, PR/MR description, write-up) -> '
+            'Codex via the codex plugin. Yours: the brief (facts, measured numbers with sources, '
+            'layout, audience) and the review of every number and claim. '
+            'If Codex is unavailable, write the report yourself — no fallback to GLM-5.3 '
+            'or other local models.'
         )
     lines.append(
         "Yours, never delegated: decomposition, judgment, final synthesis, and "

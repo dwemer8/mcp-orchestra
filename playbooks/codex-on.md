@@ -30,7 +30,8 @@ If you didn't write that line, you skipped the gate. No silent "I'll just do it 
   numbers with their sources, the required layout (CLAUDE.md report rules) and the
   audience — plus the review: every number and claim checked against its source, nothing
   invented, language per WRITING.md. Posting/publishing stays yours. A short answer in
-  chat is not a report and stays yours.
+  chat is not a report and stays yours. **If Codex is unavailable, write the report
+  yourself** — never hand it to GLM-5.3 or another local model.
 - About to produce **many similar items** (candidates, classifications, filters, drafts,
   per-file edits) → **`local_batch`** on Qwen3.6-35B. You review the distilled shortlist,
   not the raw pile.
@@ -59,7 +60,7 @@ codex-plugin-cc. You are Claude Code.
 |---|---|---|
 | Decomposition, final analysis, decisions, hypothesis design | **You (Claude)** | — native |
 | Final/production code from a clear spec | **Codex** | codex plugin |
-| Reports: tracker comments, PR/MR descriptions, write-ups | **Codex** (you brief + review) | codex plugin |
+| Reports: tracker comments, PR/MR descriptions, write-ups | **Codex** (you brief + review); Codex down → you | codex plugin |
 | Heavy generation, long reasoning, best-quality drafts | **GLM-5.3** (reasoning `high` by default) | `local_generate` |
 | Second opinion / alternative approach | Qwen3.5-397B-A17B-FP8, then gpt-oss-120b | `local_generate` / `local_batch` |
 | Mass candidate fan-out, classification, filtering | Qwen3.6-35B-A3B | `local_batch` |
@@ -97,7 +98,7 @@ Three rules, in priority order:
    (unsloth-coder or Qwen3.6-35B), hand Codex a *clear spec* for the clean version, or
    a *complete brief* (facts + numbers + layout) for a report. Don't burn Codex turns on
    exploration or on gathering the facts. If Codex is unavailable, GLM-5.3
-   (reasoning `high`) is the local stand-in for both.
+   (reasoning `high`) is the local stand-in for final code; reports you write yourself.
 
 ---
 
@@ -156,7 +157,8 @@ minutes, and a slow answer is not a dead model.
 
 | Unavailable model | Try next | Then |
 |---|---|---|
-| **Codex** (final code, reports) | GLM-5.3 | Qwen3.5-397B |
+| **Codex** (final code) | GLM-5.3 | Qwen3.5-397B |
+| **Codex** (reports) | you (Claude) — no local-model fallback | — |
 | **GLM-5.3** (heavy path) | Qwen3.5-397B | gpt-oss-120b |
 | Qwen3.5-397B (second opinion) | GLM-5.3 | gpt-oss-120b |
 | gpt-oss-120b | Qwen3.5-397B | GLM-5.3 |
